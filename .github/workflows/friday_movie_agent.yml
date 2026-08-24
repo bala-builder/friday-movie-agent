@@ -1,0 +1,44 @@
+name: Friday Movie Recommendation Agent
+
+on:
+  schedule:
+    # Runs every Friday at 21:00 UTC (5:00 PM EST / 2:00 PM PST)
+    - cron: '0 21 * * 5'
+  workflow_dispatch: # Allows manual trigger from GitHub UI for testing anytime
+
+jobs:
+  run-movie-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Friday Movie Agent
+        env:
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WATCH_REGION: ${{ vars.WATCH_REGION || 'US' }}
+          DEFAULT_WATCH_PROVIDERS: ${{ vars.DEFAULT_WATCH_PROVIDERS || '8|9|350|386' }}
+        run: |
+          python main.py
+
+      - name: Commit and Push Updated Memory DB
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action Movie Agent"
+          git add movie_memory.db
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore: update movie recommendations & memory db [skip ci]"
+          git push

@@ -1,0 +1,38 @@
+# Environment variables & secrets
+.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Database files
+# Note: Keep movie_memory.db tracked if using GitHub Actions memory persistence, or ignore if strictly local:
+# movie_memory.db
+
+# OS files
+.DS_Store
+Thumbs.db
