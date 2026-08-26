@@ -80,9 +80,13 @@ def process_telegram_update(update: Dict[str, Any]):
 
             elif text in ["/recommend", "/tonight", "/movies"]:
                 send_message(chat_id, "🍿 <i>Curating 3 top-rated movies for tonight using Gemini & TMDb...</i>")
-                agent = MovieAgent(db=db)
-                response = agent.select_friday_recommendations()
-                send_telegram_recommendations(response, bot_token=BOT_TOKEN, chat_id=chat_id)
+                try:
+                    agent = MovieAgent(db=db)
+                    response = agent.select_friday_recommendations()
+                    send_telegram_recommendations(response, bot_token=BOT_TOKEN, chat_id=chat_id)
+                except Exception as rec_err:
+                    print(f"[Webhook Rec Error] {rec_err}")
+                    send_message(chat_id, f"❌ <b>Error curating movies:</b>\n<code>{rec_err}</code>")
 
             elif text in ["/history"]:
                 history = db.get_user_history(limit=8)
@@ -118,14 +122,15 @@ def process_telegram_update(update: Dict[str, Any]):
 
             else:
                 # Conversational response via Gemini
-                profile = db.get_user_profile()
-                history = db.get_user_history(limit=10)
-                system_instruction = (
-                    "You are an engaging, knowledgeable personal AI film concierge for Telegram. "
-                    "You know the user's movie taste, their watch history, and their streaming subscriptions. "
-                    "Format your responses with clean Telegram HTML (<b>bold</b>, <i>italic</i>). Keep answers punchy and fun."
-                )
-                context_prompt = f"""
+                try:
+                    profile = db.get_user_profile()
+                    history = db.get_user_history(limit=10)
+                    system_instruction = (
+                        "You are an engaging, knowledgeable personal AI film concierge for Telegram. "
+                        "You know the user's movie taste, their watch history, and their streaming subscriptions. "
+                        "Format your responses with clean Telegram HTML (<b>bold</b>, <i>italic</i>). Keep answers punchy and fun."
+                    )
+                    context_prompt = f"""
 User Profile:
 - Taste Summary: {profile.get('taste_summary')}
 - Favorite Genres: {profile.get('favorite_genres')}
@@ -137,16 +142,19 @@ Recent Movie History:
 User Message:
 {text}
 """
-                client = genai.Client(api_key=GEMINI_API_KEY)
-                response = client.models.generate_content(
-                    model=GEMINI_MODEL,
-                    contents=context_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=0.7
+                    client = genai.Client(api_key=GEMINI_API_KEY)
+                    response = client.models.generate_content(
+                        model=GEMINI_MODEL,
+                        contents=context_prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            temperature=0.7
+                        )
                     )
-                )
-                send_message(chat_id, response.text)
+                    send_message(chat_id, response.text)
+                except Exception as chat_err:
+                    print(f"[Webhook Chat Error] {chat_err}")
+                    send_message(chat_id, f"❌ <b>Error:</b>\n<code>{chat_err}</code>")
 
     except Exception as e:
         print(f"[Webhook Error] {e}")
