@@ -1,0 +1,176 @@
+"""
+FastAPI Webhook Server for Telegram Bot on Google Cloud Run.
+Scales to zero when idle and responds instantly to Telegram updates.
+"""
+
+import os
+import sys
+import json
+import requests
+from typing import Dict, Any, Optional
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
+from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from db import MovieDatabase
+from agent import MovieAgent
+from notifier import send_telegram_recommendations
+from feedback_handler import handle_telegram_callback
+from google import genai
+from google.genai import types
+
+app = FastAPI(title="Friday Movie Agent Webhook")
+
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+ALLOWED_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+
+db = MovieDatabase()
+
+
+def send_message(chat_id: str, text: str, parse_mode: str = "HTML", reply_markup: Optional[Dict[str, Any]] = None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"[Webhook] Error sending Telegram message: {e}")
+
+
+def process_telegram_update(update: Dict[str, Any]):
+    """Processes incoming message or button click in background task."""
+    try:
+        # 1. Handle Inline Button Clicks
+        if "callback_query" in update:
+            handle_telegram_callback(update["callback_query"], db, BOT_TOKEN)
+            return
+
+        # 2. Handle Text Messages
+        if "message" in update:
+            msg = update["message"]
+            chat_id = str(msg.get("chat", {}).get("id"))
+            text = msg.get("text", "").strip()
+
+            if not text:
+                return
+
+            if ALLOWED_CHAT_ID and chat_id != str(ALLOWED_CHAT_ID):
+                send_message(chat_id, "⛔ Unauthorized access.")
+                return
+
+            if text.startswith("/start") or text.startswith("/help"):
+                help_text = (
+                    "🍿 <b>Welcome to Your 24/7 Movie Agent on Cloud Run!</b> 🎬\n\n"
+                    "Commands you can use anytime:\n"
+                    "• <b>/recommend</b> or <b>/tonight</b> — Get 3 fresh curated movies\n"
+                    "• <b>/history</b> — View your past recommendations & reactions\n"
+                    "• <b>/profile</b> — View your learned AI taste profile\n\n"
+                    "💬 <i>Or just chat with me normally! Ask for recommendations by mood, actor trivia, or plot discussions.</i>"
+                )
+                send_message(chat_id, help_text)
+
+            elif text in ["/recommend", "/tonight", "/movies"]:
+                send_message(chat_id, "🍿 <i>Curating 3 top-rated movies for tonight using Gemini & TMDb...</i>")
+                agent = MovieAgent(db=db)
+                response = agent.select_friday_recommendations()
+                send_telegram_recommendations(response, bot_token=BOT_TOKEN, chat_id=chat_id)
+
+            elif text in ["/history"]:
+                history = db.get_user_history(limit=8)
+                if not history:
+                    send_message(chat_id, "📜 <i>No recommendations recorded yet. Send /recommend to get started!</i>")
+                    return
+                lines = ["📜 <b>Recent Recommendations History:</b>\n"]
+                for item in history:
+                    status_emoji = {
+                        "recommended": "⏳",
+                        "selected": "🍿",
+                        "liked": "👍",
+                        "disliked": "👎",
+                        "skipped": "⏭️"
+                    }.get(item["status"], "•")
+                    lines.append(f"{status_emoji} <b>{item['title']}</b> ({item['release_year']}) ⭐ {item['rating']}/10")
+                    lines.append(f"   <i>Status:</i> {item['status'].upper()} | <i>Streaming:</i> {item['providers']}")
+                    if item.get("user_notes"):
+                        lines.append(f"   <i>Notes:</i> {item['user_notes']}")
+                    lines.append("")
+                send_message(chat_id, "\n".join(lines))
+
+            elif text in ["/profile", "/taste"]:
+                profile = db.get_user_profile()
+                lines = [
+                    "🧠 <b>Your AI Taste Profile:</b>\n",
+                    f"📌 <b>Taste Summary:</b>\n<i>{profile.get('taste_summary')}</i>\n",
+                    f"❤️ <b>Favorite Genres:</b> {profile.get('favorite_genres')}",
+                    f"🚫 <b>Disliked Tropes:</b> {profile.get('disliked_genres')}",
+                    f"🕒 <b>Last Refined:</b> {profile.get('updated_at')}"
+                ]
+                send_message(chat_id, "\n".join(lines))
+
+            else:
+                # Conversational response via Gemini
+                profile = db.get_user_profile()
+                history = db.get_user_history(limit=10)
+                system_instruction = (
+                    "You are an engaging, knowledgeable personal AI film concierge for Telegram. "
+                    "You know the user's movie taste, their watch history, and their streaming subscriptions. "
+                    "Format your responses with clean Telegram HTML (<b>bold</b>, <i>italic</i>). Keep answers punchy and fun."
+                )
+                context_prompt = f"""
+User Profile:
+- Taste Summary: {profile.get('taste_summary')}
+- Favorite Genres: {profile.get('favorite_genres')}
+- Disliked Tropes: {profile.get('disliked_genres')}
+
+Recent Movie History:
+{json.dumps(history, default=str)}
+
+User Message:
+{text}
+"""
+                client = genai.Client(api_key=GEMINI_API_KEY)
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=context_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.7
+                    )
+                )
+                send_message(chat_id, response.text)
+
+    except Exception as e:
+        print(f"[Webhook Error] {e}")
+
+
+@app.get("/")
+def root():
+    return {"status": "ok", "service": "Friday Movie Agent on Cloud Run"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+
+@app.post("/webhook")
+async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Receives webhook events from Telegram and processes them asynchronously."""
+    update = await request.json()
+    background_tasks.add_task(process_telegram_update, update)
+    return JSONResponse(content={"ok": True})
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8080))
+    uvicorn.run("webhook:app", host="0.0.0.0", port=port)
