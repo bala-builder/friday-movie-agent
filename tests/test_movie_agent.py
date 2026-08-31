@@ -38,13 +38,38 @@ class TestMovieDatabase(unittest.TestCase):
         summary = "A mind-bending heist thriller about entering dreams."
         self.db.record_recommendation(movie_1, summary)
 
-        prev_ids = self.db.get_previously_recommended_ids()
+        prev_ids = self.db.get_previously_recommended_ids(cooldown_days=14)
         self.assertIn(101, prev_ids)
 
         history = self.db.get_user_history()
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["title"], "Inception")
         self.assertEqual(history[0]["status"], "recommended")
+
+    def test_re_recommendation_unreviewed_vs_feedback(self):
+        # Movie 1: with feedback (liked) -> permanently excluded
+        movie_liked = {"id": 1, "title": "Liked Movie", "rating": 8.0, "genres": ["Drama"], "streaming_providers": ["Netflix"]}
+        self.db.record_recommendation(movie_liked, "Summary 1")
+        self.db.record_feedback(1, "liked")
+
+        # Movie 2: recent recommendation today with no feedback -> excluded within 14-day cooldown
+        movie_recent = {"id": 2, "title": "Recent Unreviewed", "rating": 8.0, "genres": ["Drama"], "streaming_providers": ["Netflix"]}
+        self.db.record_recommendation(movie_recent, "Summary 2")
+
+        # Movie 3: older recommendation from 20 days ago with no feedback -> eligible again!
+        movie_old = {"id": 3, "title": "Old Unreviewed", "rating": 8.0, "genres": ["Drama"], "streaming_providers": ["Netflix"]}
+        self.db.record_recommendation(movie_old, "Summary 3")
+        with self.db._get_connection() as conn:
+            conn.cursor().execute("UPDATE movie_history SET recommended_date = datetime('now', '-20 days') WHERE movie_id = 3")
+            conn.commit()
+
+        excluded_ids = self.db.get_previously_recommended_ids(cooldown_days=14)
+        # Liked movie is permanently excluded
+        self.assertIn(1, excluded_ids)
+        # Recent unreviewed movie is in cooldown
+        self.assertIn(2, excluded_ids)
+        # Old unreviewed movie (20 days ago) is NOT excluded (eligible to be recommended again)
+        self.assertNotIn(3, excluded_ids)
 
     def test_record_feedback(self):
         movie_1 = {

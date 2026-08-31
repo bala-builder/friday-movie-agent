@@ -17,7 +17,7 @@ load_dotenv()
 from db import MovieDatabase
 from agent import MovieAgent
 from notifier import send_telegram_recommendations
-from feedback_handler import handle_telegram_callback
+from feedback_handler import handle_telegram_callback, poll_telegram_feedback_once, refine_taste_profile
 from google import genai
 from google.genai import types
 
@@ -176,6 +176,30 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
     update = await request.json()
     background_tasks.add_task(process_telegram_update, update)
     return JSONResponse(content={"ok": True})
+
+
+@app.api_route("/cron/friday", methods=["GET", "POST"])
+def trigger_friday_cron(background_tasks: BackgroundTasks):
+    """
+    Scheduled Friday trigger invoked by Cloud Scheduler at 5:00 PM EST.
+    Runs feedback checks, curates recommendations, and delivers to Telegram.
+    """
+    def _run_workflow():
+        try:
+            print("[Cron] Starting Friday scheduled recommendation workflow...")
+            poll_telegram_feedback_once(bot_token=BOT_TOKEN, db=db)
+            refine_taste_profile(db=db)
+            agent = MovieAgent(db=db)
+            response = agent.select_friday_recommendations()
+            send_telegram_recommendations(response, bot_token=BOT_TOKEN, chat_id=ALLOWED_CHAT_ID)
+            print("[Cron] Friday scheduled recommendation workflow completed successfully!")
+        except Exception as e:
+            print(f"[Cron Error] Failed to execute Friday workflow: {e}")
+            if ALLOWED_CHAT_ID:
+                send_message(str(ALLOWED_CHAT_ID), f"❌ <b>Friday Cron Error:</b>\n<code>{e}</code>")
+
+    background_tasks.add_task(_run_workflow)
+    return {"status": "accepted", "message": "Friday movie curation workflow started"}
 
 
 if __name__ == "__main__":

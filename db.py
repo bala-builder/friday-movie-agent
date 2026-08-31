@@ -73,11 +73,20 @@ class MovieDatabase:
                 """)
             conn.commit()
 
-    def get_previously_recommended_ids(self) -> List[int]:
-        """Returns list of all movie IDs that have already been recommended to avoid duplicates."""
+    def get_previously_recommended_ids(self, cooldown_days: int = 14) -> List[int]:
+        """
+        Returns list of movie IDs to exclude from new recommendations:
+        - All movies with explicit user feedback (selected, liked, disliked, skipped).
+        - Movies recommended recently within cooldown_days that received no feedback yet.
+        Movies recommended with no feedback older than cooldown_days are eligible again.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT movie_id FROM movie_history")
+            cursor.execute("""
+                SELECT movie_id FROM movie_history
+                WHERE status IN ('selected', 'liked', 'disliked', 'skipped')
+                   OR (status = 'recommended' AND recommended_date >= datetime('now', ?))
+            """, (f"-{cooldown_days} days",))
             rows = cursor.fetchall()
             return [row["movie_id"] for row in rows]
 

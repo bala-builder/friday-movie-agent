@@ -2,8 +2,8 @@ name: Friday Movie Recommendation Agent
 
 on:
   schedule:
-    # Runs every Friday at 21:00 UTC (5:00 PM EST / 2:00 PM PST)
-    - cron: '0 21 * * 5'
+    # Runs every Friday at 21:23 UTC (~5:23 PM EDT / ~4:23 PM EST off-peak to avoid queue delay)
+    - cron: '23 21 * * 5'
   workflow_dispatch: # Allows manual trigger from GitHub UI for testing anytime
 
 jobs:

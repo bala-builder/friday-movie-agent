@@ -16,14 +16,16 @@ from feedback_handler import refine_taste_profile
 class TestTMDbClient(unittest.TestCase):
     @patch("requests.get")
     def test_flatrate_filtering(self, mock_get):
-        # Mock watch providers response containing both flatrate (Netflix) and rent/buy (Apple TV purchase)
+        # Mock watch providers response containing allowed flatrate (Netflix, Prime), disallowed flatrate (Hulu, Max), and rent/buy
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "results": {
                 "US": {
                     "flatrate": [
                         {"provider_id": 8, "provider_name": "Netflix"},
-                        {"provider_id": 9, "provider_name": "Amazon Prime Video"}
+                        {"provider_id": 9, "provider_name": "Amazon Prime Video"},
+                        {"provider_id": 15, "provider_name": "Hulu"},
+                        {"provider_id": 1899, "provider_name": "Max"}
                     ],
                     "rent": [
                         {"provider_id": 2, "provider_name": "Apple TV"}
@@ -37,13 +39,15 @@ class TestTMDbClient(unittest.TestCase):
         mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
-        client = TMDbClient(api_key="mock_key", region="US")
+        client = TMDbClient(api_key="mock_key", region="US", provider_ids="8|9|350|386")
         providers = client.get_watch_providers_for_movie(123)
 
-        # Should only include Netflix and Amazon Prime Video (flatrate), not Apple TV (rent) or Google Play (buy)
+        # Should only include Netflix and Amazon Prime Video (allowed flatrate), NOT Hulu, Max, Apple TV (rent) or Google Play (buy)
         self.assertEqual(len(providers), 2)
         self.assertIn("Netflix", providers)
         self.assertIn("Amazon Prime Video", providers)
+        self.assertNotIn("Hulu", providers)
+        self.assertNotIn("Max", providers)
         self.assertNotIn("Google Play Movies", providers)
 
     @patch("requests.get")

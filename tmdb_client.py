@@ -6,15 +6,12 @@ import os
 import requests
 from typing import List, Dict, Any, Optional
 
-# Standard base subscription provider IDs in TMDb
+# Allowed base subscription provider IDs in TMDb
 KNOWN_PROVIDERS = {
     8: "Netflix",
     9: "Amazon Prime Video",
     350: "Apple TV+",
-    386: "Peacock",
-    15: "Hulu",
-    337: "Disney+",
-    1899: "Max"
+    386: "Peacock"
 }
 
 GENRE_MAP = {
@@ -87,8 +84,8 @@ class TMDbClient:
                 pid = provider.get("provider_id")
                 pname = provider.get("provider_name")
                 
-                # Check if it matches our allowed base subscription providers
-                if pid in allowed_provider_ids or pid in KNOWN_PROVIDERS:
+                # Check if it strictly matches our allowed base subscription providers
+                if pid in allowed_provider_ids:
                     clean_name = KNOWN_PROVIDERS.get(pid, pname)
                     if clean_name not in active_providers:
                         active_providers.append(clean_name)

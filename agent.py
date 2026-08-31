@@ -73,8 +73,8 @@ class MovieAgent:
         # 4. Construct prompt for Gemini
         system_instruction = (
             "You are an expert personal film curator. Every Friday, you recommend exactly 3 exceptional movies "
-            "rated 7.5 or higher that are available on base subscription streaming platforms (Netflix, Prime Video, Apple TV+, Peacock, etc.) "
-            "without additional rental/purchase fees. "
+            "rated 7.5 or higher that are available on the user's specific base subscription streaming platforms "
+            "(Apple TV+, Netflix, Peacock, and Amazon Prime Video) without additional rental/purchase fees. "
             "You personalize recommendations by learning from the user's taste profile and past reactions (liked, disliked, selected). "
             "For each movie, provide an engaging, spoiler-free 1-paragraph summary (3-4 sentences) that highlights the core premise "
             "and explains why they will enjoy it."
