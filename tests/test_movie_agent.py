@@ -38,7 +38,7 @@ class TestMovieDatabase(unittest.TestCase):
         summary = "A mind-bending heist thriller about entering dreams."
         self.db.record_recommendation(movie_1, summary)
 
-        prev_ids = self.db.get_previously_recommended_ids(cooldown_days=14)
+        prev_ids = self.db.get_previously_recommended_ids()
         self.assertIn(101, prev_ids)
 
         history = self.db.get_user_history()
@@ -46,30 +46,25 @@ class TestMovieDatabase(unittest.TestCase):
         self.assertEqual(history[0]["title"], "Inception")
         self.assertEqual(history[0]["status"], "recommended")
 
-    def test_re_recommendation_unreviewed_vs_feedback(self):
-        # Movie 1: with feedback (liked) -> permanently excluded
-        movie_liked = {"id": 1, "title": "Liked Movie", "rating": 8.0, "genres": ["Drama"], "streaming_providers": ["Netflix"]}
-        self.db.record_recommendation(movie_liked, "Summary 1")
+    def test_strict_anti_repetition_never_repeats(self):
+        # Movie 1: recommended with feedback
+        movie_1 = {"id": 1, "title": "Liked Movie", "rating": 8.0, "genres": ["Drama"], "streaming_providers": ["Netflix"]}
+        self.db.record_recommendation(movie_1, "Summary 1")
         self.db.record_feedback(1, "liked")
 
-        # Movie 2: recent recommendation today with no feedback -> excluded within 14-day cooldown
-        movie_recent = {"id": 2, "title": "Recent Unreviewed", "rating": 8.0, "genres": ["Drama"], "streaming_providers": ["Netflix"]}
-        self.db.record_recommendation(movie_recent, "Summary 2")
+        # Movie 2: recommended today with no feedback
+        movie_2 = {"id": 2, "title": "Recent Unreviewed", "rating": 8.0, "genres": ["Drama"], "streaming_providers": ["Netflix"]}
+        self.db.record_recommendation(movie_2, "Summary 2")
 
-        # Movie 3: older recommendation from 20 days ago with no feedback -> eligible again!
-        movie_old = {"id": 3, "title": "Old Unreviewed", "rating": 8.0, "genres": ["Drama"], "streaming_providers": ["Netflix"]}
-        self.db.record_recommendation(movie_old, "Summary 3")
-        with self.db._get_connection() as conn:
-            conn.cursor().execute("UPDATE movie_history SET recommended_date = datetime('now', '-20 days') WHERE movie_id = 3")
-            conn.commit()
+        # Movie 3: recommended 30 days ago with no feedback
+        movie_3 = {"id": 3, "title": "Old Unreviewed", "rating": 8.0, "genres": ["Drama"], "streaming_providers": ["Netflix"]}
+        self.db.record_recommendation(movie_3, "Summary 3")
 
-        excluded_ids = self.db.get_previously_recommended_ids(cooldown_days=14)
-        # Liked movie is permanently excluded
+        excluded_ids = self.db.get_previously_recommended_ids()
+        # All previously recommended movies are strictly excluded so the agent never repeats them!
         self.assertIn(1, excluded_ids)
-        # Recent unreviewed movie is in cooldown
         self.assertIn(2, excluded_ids)
-        # Old unreviewed movie (20 days ago) is NOT excluded (eligible to be recommended again)
-        self.assertNotIn(3, excluded_ids)
+        self.assertIn(3, excluded_ids)
 
     def test_record_feedback(self):
         movie_1 = {
@@ -135,11 +130,11 @@ class TestNotifier(unittest.TestCase):
         self.assertIn("Arrival", md)
         self.assertIn("Knives Out", md)
         self.assertIn("7.9/10", md)
-        self.assertIn("Included in subscription", md)
+        self.assertIn("Included in base subscription", md)
 
         html = format_telegram_html(sample_response)
         self.assertIn("<b>1. Dune</b>", html)
-        self.assertIn("Included with subscription", html)
+        self.assertIn("Included with base subscription", html)
 
 
 if __name__ == "__main__":

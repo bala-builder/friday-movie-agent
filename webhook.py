@@ -120,21 +120,45 @@ def process_telegram_update(update: Dict[str, Any]):
                 ]
                 send_message(chat_id, "\n".join(lines))
 
+            elif text.startswith("/critique") or any(w in text.lower() for w in ["watched", "loved it", "disliked", "hated it", "too slow", "too long", "dragged", "pacing was"]):
+                recent = db.get_user_history(limit=1)
+                if recent:
+                    target_id = recent[0]["movie_id"]
+                    try:
+                        from feedback_handler import process_user_critique
+                        parsed = process_user_critique(target_id, text, db)
+                        msg_reply = (
+                            f"⚡ <b>Jev System 1 Analysis:</b>\n"
+                            f"• <b>Score:</b> {parsed.sentiment_score}/5.0\n"
+                            f"• <b>Pacing:</b> {parsed.pacing_preference}\n"
+                            f"• <b>Tone:</b> {parsed.tone_preference}\n"
+                            f"• <b>Runtime:</b> {parsed.preferred_runtime_category}\n"
+                            f"• <b>Disliked:</b> {parsed.disliked_genre}\n\n"
+                            f"✅ <i>Critique recorded for <b>{recent[0]['title']}</b>! Taste profile refined.</i>"
+                        )
+                        send_message(chat_id, msg_reply)
+                        return
+                    except Exception as jev_err:
+                        print(f"[Webhook Jev Error] {jev_err}")
+
             else:
-                # Conversational response via Gemini
+                # Conversational response via Gemini using rich Jev profile
                 try:
                     profile = db.get_user_profile()
                     history = db.get_user_history(limit=10)
                     system_instruction = (
                         "You are an engaging, knowledgeable personal AI film concierge for Telegram. "
                         "You know the user's movie taste, their watch history, and their streaming subscriptions. "
+                        "You strictly respect their Jev-extracted preferences: preferred pacing, tone, and genres to avoid. "
                         "Format your responses with clean Telegram HTML (<b>bold</b>, <i>italic</i>). Keep answers punchy and fun."
                     )
                     context_prompt = f"""
-User Profile:
+User Profile & Jev Signals:
 - Taste Summary: {profile.get('taste_summary')}
+- Preferred Pacing: {profile.get('preferred_pacing', 'moderate')}
+- Preferred Tone: {profile.get('preferred_tone', 'cerebral_thoughtprovoking')}
+- Avoided Genres: {profile.get('avoid_genres', 'none')}
 - Favorite Genres: {profile.get('favorite_genres')}
-- Disliked Tropes: {profile.get('disliked_genres')}
 
 Recent Movie History:
 {json.dumps(history, default=str)}
@@ -162,7 +186,7 @@ User Message:
 
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "Friday Movie Agent on Cloud Run"}
+    return {"status": "ok", "service": "Friday Movie Agent with Jev System 1 on Cloud Run"}
 
 
 @app.get("/health")

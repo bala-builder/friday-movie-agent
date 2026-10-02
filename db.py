@@ -43,9 +43,25 @@ class MovieDatabase:
                     status TEXT DEFAULT 'recommended', -- 'recommended', 'selected', 'liked', 'disliked', 'skipped'
                     recommended_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     feedback_date TIMESTAMP,
-                    user_notes TEXT
+                    user_notes TEXT,
+                    feedback_text TEXT,
+                    sentiment_score REAL,
+                    pacing_pref TEXT,
+                    tone_pref TEXT
                 )
             """)
+
+            # Ensure columns exist in case table was already created
+            cursor.execute("PRAGMA table_info(movie_history)")
+            existing_cols = {row["name"] for row in cursor.fetchall()}
+            for col, col_type in [
+                ("feedback_text", "TEXT"),
+                ("sentiment_score", "REAL"),
+                ("pacing_pref", "TEXT"),
+                ("tone_pref", "TEXT")
+            ]:
+                if col not in existing_cols:
+                    cursor.execute(f"ALTER TABLE movie_history ADD COLUMN {col} {col_type}")
 
             # Table for storing user taste profile & evolving LLM notes
             cursor.execute("""
@@ -54,39 +70,48 @@ class MovieDatabase:
                     taste_summary TEXT,
                     favorite_genres TEXT,
                     disliked_genres TEXT,
+                    preferred_pacing TEXT DEFAULT 'unspecified',
+                    preferred_tone TEXT DEFAULT 'unspecified',
+                    avoid_genres TEXT DEFAULT 'none',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            cursor.execute("PRAGMA table_info(user_profile)")
+            prof_cols = {row["name"] for row in cursor.fetchall()}
+            for col, col_type in [
+                ("preferred_pacing", "TEXT DEFAULT 'unspecified'"),
+                ("preferred_tone", "TEXT DEFAULT 'unspecified'"),
+                ("avoid_genres", "TEXT DEFAULT 'none'")
+            ]:
+                if col not in prof_cols:
+                    cursor.execute(f"ALTER TABLE user_profile ADD COLUMN {col} {col_type}")
 
             # Seed default profile if empty
             cursor.execute("SELECT COUNT(*) as cnt FROM user_profile WHERE id = 1")
             row = cursor.fetchone()
             if row["cnt"] == 0:
                 cursor.execute("""
-                    INSERT INTO user_profile (id, taste_summary, favorite_genres, disliked_genres)
+                    INSERT INTO user_profile (id, taste_summary, favorite_genres, disliked_genres, preferred_pacing, preferred_tone)
                     VALUES (
                         1,
                         'Enjoys well-crafted movies rated 7.5+ with strong storytelling, high rewatchability, and engaging characters across diverse genres.',
                         'Drama, Sci-Fi, Thriller, Mystery, Crime',
-                        'Excessive gore, low-budget slapstick'
+                        'Excessive gore, low-budget slapstick',
+                        'moderate',
+                        'cerebral_thoughtprovoking'
                     )
                 """)
             conn.commit()
 
-    def get_previously_recommended_ids(self, cooldown_days: int = 14) -> List[int]:
+    def get_previously_recommended_ids(self) -> List[int]:
         """
-        Returns list of movie IDs to exclude from new recommendations:
-        - All movies with explicit user feedback (selected, liked, disliked, skipped).
-        - Movies recommended recently within cooldown_days that received no feedback yet.
-        Movies recommended with no feedback older than cooldown_days are eligible again.
+        Returns list of all movie IDs that have EVER been recommended or interacted with.
+        Strictly prevents repeating movie recommendations.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT movie_id FROM movie_history
-                WHERE status IN ('selected', 'liked', 'disliked', 'skipped')
-                   OR (status = 'recommended' AND recommended_date >= datetime('now', ?))
-            """, (f"-{cooldown_days} days",))
+            cursor.execute("SELECT movie_id FROM movie_history")
             rows = cursor.fetchall()
             return [row["movie_id"] for row in rows]
 
@@ -117,6 +142,21 @@ class MovieDatabase:
         Updates the status of a recommended movie.
         status can be: 'selected', 'liked', 'disliked', 'skipped'
         """
+        self.record_rich_feedback(movie_id=movie_id, status=status, user_notes=user_notes)
+
+    def record_rich_feedback(
+        self,
+        movie_id: int,
+        status: str,
+        feedback_text: Optional[str] = None,
+        sentiment_score: Optional[float] = None,
+        pacing_pref: Optional[str] = None,
+        tone_pref: Optional[str] = None,
+        user_notes: Optional[str] = None
+    ):
+        """
+        Updates movie interaction with multi-dimensional parsed feedback from Jev.
+        """
         valid_statuses = {"recommended", "selected", "liked", "disliked", "skipped"}
         if status not in valid_statuses:
             raise ValueError(f"Invalid status: {status}. Must be one of {valid_statuses}")
@@ -125,9 +165,15 @@ class MovieDatabase:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE movie_history
-                SET status = ?, feedback_date = CURRENT_TIMESTAMP, user_notes = COALESCE(?, user_notes)
+                SET status = ?,
+                    feedback_date = CURRENT_TIMESTAMP,
+                    user_notes = COALESCE(?, user_notes),
+                    feedback_text = COALESCE(?, feedback_text),
+                    sentiment_score = COALESCE(?, sentiment_score),
+                    pacing_pref = COALESCE(?, pacing_pref),
+                    tone_pref = COALESCE(?, tone_pref)
                 WHERE movie_id = ?
-            """, (status, user_notes, movie_id))
+            """, (status, user_notes, feedback_text, sentiment_score, pacing_pref, tone_pref, movie_id))
             conn.commit()
 
     def get_user_history(self, limit: int = 50) -> List[Dict[str, Any]]:
@@ -135,7 +181,9 @@ class MovieDatabase:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT movie_id, title, release_year, rating, genres, providers, summary, status, recommended_date, feedback_date, user_notes
+                SELECT movie_id, title, release_year, rating, genres, providers, summary, status,
+                       recommended_date, feedback_date, user_notes, feedback_text, sentiment_score,
+                       pacing_pref, tone_pref
                 FROM movie_history
                 ORDER BY recommended_date DESC
                 LIMIT ?
@@ -147,12 +195,23 @@ class MovieDatabase:
         """Retrieves current user taste profile."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT taste_summary, favorite_genres, disliked_genres, updated_at FROM user_profile WHERE id = 1")
+            cursor.execute("""
+                SELECT taste_summary, favorite_genres, disliked_genres, preferred_pacing, preferred_tone, avoid_genres, updated_at
+                FROM user_profile WHERE id = 1
+            """)
             row = cursor.fetchone()
             return dict(row) if row else {}
 
-    def update_taste_profile(self, taste_summary: str, favorite_genres: Optional[str] = None, disliked_genres: Optional[str] = None):
-        """Updates the learned user taste profile."""
+    def update_taste_profile(
+        self,
+        taste_summary: str,
+        favorite_genres: Optional[str] = None,
+        disliked_genres: Optional[str] = None,
+        preferred_pacing: Optional[str] = None,
+        preferred_tone: Optional[str] = None,
+        avoid_genres: Optional[str] = None
+    ):
+        """Updates the learned user taste profile with Jev and Gemini signals."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -160,7 +219,10 @@ class MovieDatabase:
                 SET taste_summary = ?,
                     favorite_genres = COALESCE(?, favorite_genres),
                     disliked_genres = COALESCE(?, disliked_genres),
+                    preferred_pacing = COALESCE(?, preferred_pacing),
+                    preferred_tone = COALESCE(?, preferred_tone),
+                    avoid_genres = COALESCE(?, avoid_genres),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = 1
-            """, (taste_summary, favorite_genres, disliked_genres))
+            """, (taste_summary, favorite_genres, disliked_genres, preferred_pacing, preferred_tone, avoid_genres))
             conn.commit()

@@ -12,14 +12,15 @@ from db import MovieDatabase
 from tmdb_client import TMDbClient
 from agent import MovieAgent
 from notifier import format_markdown
-from feedback_handler import refine_taste_profile
+from feedback_handler import refine_taste_profile, process_user_critique
+from jev_client import JevClient
 
 
 def print_menu():
     print("\n🎬 --- Movie Recommendation Agent CLI ---")
     print("1. 🍿 Run Agent & Get 3 Friday Recommendations")
     print("2. 📋 View Recent Recommendations & History")
-    print("3. ⭐ Give Feedback on a Movie (Watched / Liked / Disliked)")
+    print("3. ⭐ Give Feedback / Critique on a Movie (Powered by Jev System 1)")
     print("4. 🧠 View & Refine AI Taste Profile")
     print("5. 🚪 Exit")
     print("------------------------------------------")
@@ -53,7 +54,11 @@ def handle_view_history(db: MovieDatabase):
         
         print(f"[{item['movie_id']}] {status_emoji} {item['title']} ({item['release_year']}) - ⭐ {item['rating']}/10")
         print(f"    Streaming: {item['providers']} | Status: {item['status'].upper()}")
-        if item.get("user_notes"):
+        if item.get("sentiment_score"):
+            print(f"    Jev Score: {item['sentiment_score']}/5 | Pacing: {item.get('pacing_pref', 'n/a')} | Tone: {item.get('tone_pref', 'n/a')}")
+        if item.get("feedback_text"):
+            print(f"    Critique: \"{item['feedback_text']}\"")
+        elif item.get("user_notes"):
             print(f"    Notes: {item['user_notes']}")
         print()
 
@@ -79,7 +84,33 @@ def handle_give_feedback(db: MovieDatabase):
 
     selected_movie = history[idx]
     print(f"\nSelected: '{selected_movie['title']}'")
-    print("What action would you like to record?")
+    print("How would you like to provide feedback?")
+    print("1. 💬 Tell the agent in your own words (Jev System 1 Analysis - recommended)")
+    print("2. ⚡ Quick button status (Watching / Loved / Disliked / Skip)")
+
+    fb_mode = input("Choose mode (1 or 2): ").strip()
+
+    if fb_mode == "1":
+        print("\nType your thoughts on the movie or what you liked/disliked.")
+        print("(e.g., 'Loved the dark tone and twist, but pacing was too slow and dragged on. Want something tighter next time.')")
+        critique_text = input("Your critique: ").strip()
+        if not critique_text:
+            print("No feedback entered.")
+            return
+
+        print("\n⚡ Processing critique via Jev System 1 decision model...")
+        parsed = process_user_critique(movie_id=selected_movie["movie_id"], feedback_text=critique_text, db=db)
+        print("\n✨ Jev System 1 Extraction Results:")
+        print(f"   • Sentiment Score : {parsed.sentiment_score}/5.0")
+        print(f"   • Pacing Indicated: {parsed.pacing_preference}")
+        print(f"   • Tone Preference : {parsed.tone_preference}")
+        print(f"   • Runtime Constraint: {parsed.preferred_runtime_category}")
+        print(f"   • Genre Disliked  : {parsed.disliked_genre}")
+        print("✅ Feedback recorded and taste profile updated!")
+        return
+
+    # Quick mode fallback
+    print("\nWhat action would you like to record?")
     print("1. 🍿 Watching Tonight (Selected)")
     print("2. 👍 Watched & Loved it")
     print("3. 👎 Watched & Disliked it")
@@ -102,7 +133,6 @@ def handle_give_feedback(db: MovieDatabase):
     db.record_feedback(movie_id=selected_movie["movie_id"], status=status, user_notes=notes if notes else None)
     print(f"✅ Feedback saved! Movie marked as '{status.upper()}'.")
 
-    # Update taste profile
     print("🧠 Updating AI taste profile based on your feedback...")
     refine_taste_profile(db)
 

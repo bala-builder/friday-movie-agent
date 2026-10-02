@@ -19,14 +19,19 @@ def format_markdown(response: FridayRecommendationResponse) -> str:
     for i, rec in enumerate(response.recommendations, 1):
         providers_str = ", ".join(rec.streaming_providers) if rec.streaming_providers else "Base Subscription"
         genres_str = ", ".join(rec.genres)
+        rating_detail = f"⭐ *{rec.rating}/10*"
+        if rec.rating_source:
+            votes_str = f" ({rec.imdb_votes} votes)" if rec.imdb_votes else ""
+            rating_detail += f" _[{rec.rating_source}{votes_str}]_"
+        runtime_str = f" • ⏱️ {rec.runtime}" if rec.runtime and rec.runtime != "N/A" else ""
         
-        lines.append(f"\n*{i}. {rec.title}* ({rec.release_year}) ⭐ *{rec.rating}/10*")
-        lines.append(f"📺 *Available on:* {providers_str} _(Included in subscription)_")
+        lines.append(f"\n*{i}. {rec.title}* ({rec.release_year}){runtime_str} {rating_detail}")
+        lines.append(f"📺 *Available on:* {providers_str} _(Included in base subscription)_")
         lines.append(f"🏷️ *Genres:* {genres_str}")
         lines.append(f"📖 *Summary:* {rec.summary}\n")
 
     lines.append("―" * 20)
-    lines.append("💡 _Reply or click below to save your choice and refine next week's picks!_")
+    lines.append("💡 _Reply with your thoughts/critique or tap a button to train the Jev System 1 model!_")
     return "\n".join(lines)
 
 
@@ -41,14 +46,19 @@ def format_telegram_html(response: FridayRecommendationResponse) -> str:
     for i, rec in enumerate(response.recommendations, 1):
         providers_str = ", ".join(rec.streaming_providers) if rec.streaming_providers else "Base Subscription"
         genres_str = ", ".join(rec.genres)
+        rating_detail = f"⭐ <b>{rec.rating}/10</b>"
+        if rec.rating_source:
+            votes_str = f" ({rec.imdb_votes} votes)" if rec.imdb_votes else ""
+            rating_detail += f" <i>[{rec.rating_source}{votes_str}]</i>"
+        runtime_str = f" • ⏱️ {rec.runtime}" if rec.runtime and rec.runtime != "N/A" else ""
         
-        lines.append(f"\n<b>{i}. {rec.title}</b> ({rec.release_year}) ⭐ <b>{rec.rating}/10</b>")
-        lines.append(f"📺 <b>Streaming:</b> {providers_str} <i>(Included with subscription)</i>")
+        lines.append(f"\n<b>{i}. {rec.title}</b> ({rec.release_year}){runtime_str} {rating_detail}")
+        lines.append(f"📺 <b>Streaming:</b> {providers_str} <i>(Included with base subscription)</i>")
         lines.append(f"🏷️ <b>Genres:</b> {genres_str}")
         lines.append(f"📖 {rec.summary}\n")
 
     lines.append("━━━━━━━━━━━━━━━━━━━━")
-    lines.append("💡 <i>Tap a button below to log your choice and train the agent!</i>")
+    lines.append("💡 <i>Reply with text critique or tap a button below to train your Jev taste model!</i>")
     return "\n".join(lines)
 
 
