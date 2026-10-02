@@ -67,19 +67,34 @@ def process_telegram_update(update: Dict[str, Any]):
                 send_message(chat_id, "⛔ Unauthorized access.")
                 return
 
-            if text.startswith("/start") or text.startswith("/help"):
+            clean_text = text.lower().strip()
+            is_recommend_intent = (
+                clean_text.startswith("/recommend") or
+                clean_text.startswith("/tonight") or
+                clean_text.startswith("/movies") or
+                "recommend" in clean_text or
+                "what to watch" in clean_text or
+                "what should i watch" in clean_text or
+                "movie pick" in clean_text or
+                "suggest a movie" in clean_text or
+                "suggest movies" in clean_text or
+                "movie tonight" in clean_text or
+                "movie suggestions" in clean_text
+            )
+
+            if clean_text.startswith("/start") or clean_text.startswith("/help"):
                 help_text = (
                     "🍿 <b>Welcome to Your 24/7 Movie Agent on Cloud Run!</b> 🎬\n\n"
-                    "Commands you can use anytime:\n"
-                    "• <b>/recommend</b> or <b>/tonight</b> — Get 3 fresh curated movies\n"
+                    "Commands & messages you can use anytime:\n"
+                    "• <b>/recommend</b> or <b>recommend movies</b> — Curate 3 top-rated movies with live IMDb scores\n"
                     "• <b>/history</b> — View your past recommendations & reactions\n"
                     "• <b>/profile</b> — View your learned AI taste profile\n\n"
-                    "💬 <i>Or just chat with me normally! Ask for recommendations by mood, actor trivia, or plot discussions.</i>"
+                    "💬 <i>Send any critique (e.g., 'Loved the twist, hated the slow pacing') and Jev System 1 will analyze it in real time!</i>"
                 )
                 send_message(chat_id, help_text)
 
-            elif text in ["/recommend", "/tonight", "/movies"]:
-                send_message(chat_id, "🍿 <i>Curating 3 top-rated movies for tonight using Gemini & TMDb...</i>")
+            elif is_recommend_intent:
+                send_message(chat_id, "🍿 <i>Curating 3 top-rated movies with verified live IMDb ratings and base streaming availability...</i>")
                 try:
                     agent = MovieAgent(db=db)
                     response = agent.select_friday_recommendations()
@@ -88,7 +103,7 @@ def process_telegram_update(update: Dict[str, Any]):
                     print(f"[Webhook Rec Error] {rec_err}")
                     send_message(chat_id, f"❌ <b>Error curating movies:</b>\n<code>{rec_err}</code>")
 
-            elif text in ["/history"]:
+            elif clean_text in ["/history"]:
                 history = db.get_user_history(limit=8)
                 if not history:
                     send_message(chat_id, "📜 <i>No recommendations recorded yet. Send /recommend to get started!</i>")
@@ -102,25 +117,27 @@ def process_telegram_update(update: Dict[str, Any]):
                         "disliked": "👎",
                         "skipped": "⏭️"
                     }.get(item["status"], "•")
-                    lines.append(f"{status_emoji} <b>{item['title']}</b> ({item['release_year']}) ⭐ {item['rating']}/10")
+                    lines.append(f"{status_emoji} <b>{item['title']}</b> ({item['release_year']}) ⭐ <b>{item['rating']}/10</b> [IMDb]")
                     lines.append(f"   <i>Status:</i> {item['status'].upper()} | <i>Streaming:</i> {item['providers']}")
                     if item.get("user_notes"):
                         lines.append(f"   <i>Notes:</i> {item['user_notes']}")
                     lines.append("")
                 send_message(chat_id, "\n".join(lines))
 
-            elif text in ["/profile", "/taste"]:
+            elif clean_text in ["/profile", "/taste"]:
                 profile = db.get_user_profile()
                 lines = [
                     "🧠 <b>Your AI Taste Profile:</b>\n",
                     f"📌 <b>Taste Summary:</b>\n<i>{profile.get('taste_summary')}</i>\n",
                     f"❤️ <b>Favorite Genres:</b> {profile.get('favorite_genres')}",
                     f"🚫 <b>Disliked Tropes:</b> {profile.get('disliked_genres')}",
+                    f"⚡ <b>Pacing Pref:</b> {profile.get('preferred_pacing', 'moderate')}",
+                    f"🎭 <b>Tone Pref:</b> {profile.get('preferred_tone', 'cerebral_thoughtprovoking')}",
                     f"🕒 <b>Last Refined:</b> {profile.get('updated_at')}"
                 ]
                 send_message(chat_id, "\n".join(lines))
 
-            elif text.startswith("/critique") or any(w in text.lower() for w in ["watched", "loved it", "disliked", "hated it", "too slow", "too long", "dragged", "pacing was"]):
+            elif text.startswith("/critique") or any(w in clean_text for w in ["watched", "loved it", "disliked", "hated it", "too slow", "too long", "dragged", "pacing was"]):
                 recent = db.get_user_history(limit=1)
                 if recent:
                     target_id = recent[0]["movie_id"]
@@ -150,6 +167,8 @@ def process_telegram_update(update: Dict[str, Any]):
                         "You are an engaging, knowledgeable personal AI film concierge for Telegram. "
                         "You know the user's movie taste, their watch history, and their streaming subscriptions. "
                         "You strictly respect their Jev-extracted preferences: preferred pacing, tone, and genres to avoid. "
+                        "IMPORTANT: If recommending or discussing any movies, ALWAYS explicitly cite their IMDb rating (e.g. ⭐ 8.2/10 IMDb) "
+                        "and verify they are on base subscription platforms (Netflix, Prime, Apple TV+, Peacock). "
                         "Format your responses with clean Telegram HTML (<b>bold</b>, <i>italic</i>). Keep answers punchy and fun."
                     )
                     context_prompt = f"""

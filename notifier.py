@@ -35,27 +35,32 @@ def format_markdown(response: FridayRecommendationResponse) -> str:
     return "\n".join(lines)
 
 
+import html
+
+
 def format_telegram_html(response: FridayRecommendationResponse) -> str:
     """Formats recommendations into rich HTML for Telegram."""
     lines = [
         "🍿 <b>Your Friday Movie Night Lineup</b> 🎬\n",
-        f"<i>{response.thought_process}</i>\n",
+        f"<i>{html.escape(response.thought_process)}</i>\n",
         "━━━━━━━━━━━━━━━━━━━━"
     ]
 
     for i, rec in enumerate(response.recommendations, 1):
-        providers_str = ", ".join(rec.streaming_providers) if rec.streaming_providers else "Base Subscription"
-        genres_str = ", ".join(rec.genres)
-        rating_detail = f"⭐ <b>{rec.rating}/10</b>"
-        if rec.rating_source:
-            votes_str = f" ({rec.imdb_votes} votes)" if rec.imdb_votes else ""
-            rating_detail += f" <i>[{rec.rating_source}{votes_str}]</i>"
-        runtime_str = f" • ⏱️ {rec.runtime}" if rec.runtime and rec.runtime != "N/A" else ""
+        providers_str = html.escape(", ".join(rec.streaming_providers) if rec.streaming_providers else "Base Subscription")
+        genres_str = html.escape(", ".join(rec.genres))
         
-        lines.append(f"\n<b>{i}. {rec.title}</b> ({rec.release_year}){runtime_str} {rating_detail}")
+        # Build prominent IMDb rating header
+        source_label = rec.rating_source or "Live IMDb"
+        votes_str = f" ({rec.imdb_votes} votes)" if rec.imdb_votes and rec.imdb_votes != "N/A" else ""
+        rating_detail = f"⭐ <b>{rec.rating}/10</b> <i>[{html.escape(source_label)}{votes_str}]</i>"
+        runtime_str = f" • ⏱️ {html.escape(rec.runtime)}" if rec.runtime and rec.runtime != "N/A" else ""
+        
+        lines.append(f"\n<b>{i}. {html.escape(rec.title)}</b> ({html.escape(rec.release_year)}){runtime_str}")
+        lines.append(f"🏆 <b>IMDb Rating:</b> {rating_detail}")
         lines.append(f"📺 <b>Streaming:</b> {providers_str} <i>(Included with base subscription)</i>")
         lines.append(f"🏷️ <b>Genres:</b> {genres_str}")
-        lines.append(f"📖 {rec.summary}\n")
+        lines.append(f"📖 {html.escape(rec.summary)}\n")
 
     lines.append("━━━━━━━━━━━━━━━━━━━━")
     lines.append("💡 <i>Reply with text critique or tap a button below to train your Jev taste model!</i>")
@@ -114,5 +119,14 @@ def send_telegram_recommendations(
         print("[Notifier] Successfully sent Friday recommendations to Telegram!")
         return True
     except Exception as e:
-        print(f"[Notifier] Failed to send Telegram message: {e}")
-        return False
+        print(f"[Notifier] Failed to send Telegram HTML: {e}. Trying fallback markdown.")
+        try:
+            payload["parse_mode"] = None
+            payload["text"] = format_markdown(response)
+            res = requests.post(url, json=payload, timeout=10)
+            res.raise_for_status()
+            print("[Notifier] Successfully sent fallback plain text recommendations to Telegram!")
+            return True
+        except Exception as e2:
+            print(f"[Notifier] Failed to send fallback message: {e2}")
+            return False

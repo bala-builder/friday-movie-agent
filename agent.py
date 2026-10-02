@@ -123,7 +123,22 @@ Write a custom 1-paragraph summary for each recommendation.
 
         result: FridayRecommendationResponse = response.parsed
 
-        # 5. Save to database
+        # 5. Re-hydrate authentic candidate metadata directly from candidate data to ensure
+        # rating, rating_source, imdb_votes, runtime, and providers are never omitted or altered
+        candidate_lookup = {c["id"]: c for c in candidates}
+        for rec in result.recommendations:
+            cand = candidate_lookup.get(rec.movie_id)
+            if cand:
+                rec.rating = float(cand.get("rating", rec.rating))
+                rec.rating_source = str(cand.get("rating_source") or "Live IMDb")
+                rec.imdb_votes = str(cand.get("imdb_votes") or "")
+                rec.runtime = str(cand.get("runtime") or "")
+                rec.streaming_providers = cand.get("streaming_providers") or rec.streaming_providers
+                rec.genres = cand.get("genres") or rec.genres
+                rec.release_year = str(cand.get("release_year") or rec.release_year)
+                rec.title = str(cand.get("title") or rec.title)
+
+        # 6. Save to database
         for rec in result.recommendations:
             movie_dict = {
                 "id": rec.movie_id,
